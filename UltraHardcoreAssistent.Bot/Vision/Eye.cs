@@ -7,6 +7,8 @@ using System.Drawing.Imaging;
 using System.Linq;
 using System.Windows.Forms;
 using Tesseract;
+using System.Configuration;
+using System.Collections.Specialized;
 
 namespace UltraHardcoreAssistent.Bot.Vision
 {
@@ -214,7 +216,8 @@ namespace UltraHardcoreAssistent.Bot.Vision
             string result = "";
             string PatternCorrectSymbols = "QWERTYUIOPASDFGHJKLZXCVBNM";
 
-            using (var engine = new TesseractEngine(@"./tessdata", "eng", EngineMode.Default))
+            string tessdataDir = ConfigurationManager.AppSettings.Get("TessdataDir");
+            using (var engine = new TesseractEngine(tessdataDir, "eng", EngineMode.Default))
             {
                 var page = engine.Process(bmp);
                 recognizeText = page.GetText();
