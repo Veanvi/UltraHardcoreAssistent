@@ -25,11 +25,41 @@ namespace UltraHardcoreAssistent.UI
         private GameBot bot;
         private ObservableCollection<string> enteredWordsList = new ObservableCollection<string>();
         private ObservableCollection<string> pressedArrowsList = new ObservableCollection<string>();
+        private int totalArrows = 0;
+        private int totalWords = 0;
 
         public MainWindow()
         {
             InitializeComponent();
             bot = new GameBot();
+        }
+
+        private void AddArrowsToList(string m)
+        {
+            totalArrows++;
+            lbTotalArrows.Content = totalArrows.ToString();
+            pressedArrowsList.Add(m);
+            if (pressedArrowsList.Count > 100)
+            {
+                for (int i = 0; i < pressedArrowsList.Count - 100; i++)
+                {
+                    pressedArrowsList.RemoveAt(0);
+                }
+            }
+        }
+
+        private void AddWordToList(string m)
+        {
+            totalWords++;
+            lbTotalWords.Content = totalWords.ToString();
+            enteredWordsList.Add(m);
+            if (enteredWordsList.Count > 100)
+            {
+                for (int i = 0; i < enteredWordsList.Count - 100; i++)
+                {
+                    enteredWordsList.RemoveAt(0);
+                }
+            }
         }
 
         private void btnStart_Click(object sender, RoutedEventArgs e)
@@ -58,20 +88,23 @@ namespace UltraHardcoreAssistent.UI
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            lbTotalArrows.DataContext = totalArrows;
+            lbTotalWords.DataContext = totalWords;
+
             lsbWords.ItemsSource = enteredWordsList;
             lsbArrows.ItemsSource = pressedArrowsList;
             bot.OnTextEntered += (m) =>
             {
                 Dispatcher.Invoke(() =>
                 {
-                    enteredWordsList.Add(m);
+                    AddWordToList(m);
                 });
             };
             bot.OnArrowsPressed += (m) =>
             {
                 Dispatcher.Invoke(() =>
                 {
-                    pressedArrowsList.Add(m);
+                    AddArrowsToList(m);
                 });
             };
         }

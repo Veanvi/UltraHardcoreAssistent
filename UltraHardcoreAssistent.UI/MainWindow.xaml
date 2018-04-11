@@ -30,13 +30,13 @@
         <Border Grid.Row="1" Grid.Column="0" BorderThickness="0,1,1,0" BorderBrush="#FFAAAAAA" Background="#99FFFFFF">
             <StackPanel Orientation="Horizontal">
                 <Label>Total:</Label>
-                <Label Name="lbTotalWords" Content="{Binding ElementName=lsbWords, Path=Items.Count, UpdateSourceTrigger=PropertyChanged}"></Label>
+                <Label Name="lbTotalWords">0</Label>
             </StackPanel>
         </Border>
         <Border Grid.Row="1" Grid.Column="1" BorderThickness="1,1,0,0" BorderBrush="#FFAAAAAA" Background="#99FFFFFF">
             <StackPanel Orientation="Horizontal">
                 <Label>Total:</Label>
-                <Label Name="lbTotalArrows" Content="{Binding ElementName=lsbArrows, Path=Items.Count, UpdateSourceTrigger=PropertyChanged}"></Label>
+                <Label Name="lbTotalArrows">0</Label>
             </StackPanel>
         </Border>
 
