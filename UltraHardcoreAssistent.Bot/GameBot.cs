@@ -45,6 +45,9 @@ namespace UltraHardcoreAssistent.Bot
                     try
                     {
                         bool isGameActive = AutoItX.WinGetTitle("[active]") == "ultra_hardcore";
+#if DEBUG
+                        isGameActive = true;
+#endif
                         if (isGameActive)
                         {
                             currentKeyboardLayout = GetKeyboardLayout();

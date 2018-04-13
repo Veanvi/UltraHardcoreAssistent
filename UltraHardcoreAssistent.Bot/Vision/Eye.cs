@@ -88,11 +88,6 @@ namespace UltraHardcoreAssistent.Bot.Vision
 
             bmp = new Bitmap(mat.ToBitmap());
 
-            //using (new Window("изображение", bmp.ToMat()))
-            //{
-            //    Cv2.WaitKey();
-            //}
-
             if (testRun)
                 LogImage(bmp);
             return bmp;
@@ -218,7 +213,8 @@ namespace UltraHardcoreAssistent.Bot.Vision
             Mat mat = bmp.ToMat();
             Cv2.CvtColor(mat, mat, ColorConversionCodes.RGB2GRAY);
 
-            mat = mat.Threshold(75, 300, ThresholdTypes.Binary);
+            mat = mat.Blur(new OpenCvSharp.Size(5, 5));
+            mat = mat.Threshold(70, 255, ThresholdTypes.Binary);
             bmp = mat.ToBitmap();
 
             bmp = bmp.Clone(imgBounds, bmp.PixelFormat);
@@ -360,8 +356,8 @@ namespace UltraHardcoreAssistent.Bot.Vision
         /// <returns></returns>
         private Bitmap GetScreenImage()
         {
-            return GetScreenImage(Screen.PrimaryScreen.Bounds);
-            //return CropLetterbox(new Mat("testImg/test.jpg").ToBitmap());
+            //return GetScreenImage(Screen.PrimaryScreen.Bounds);
+            return CropLetterbox(new Mat("testImg/test1.jpg").ToBitmap());
         }
 
         private void LogImage(Bitmap bmp)
