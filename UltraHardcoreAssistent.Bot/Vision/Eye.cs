@@ -15,9 +15,13 @@ namespace UltraHardcoreAssistent.Bot.Vision
     internal class Eye
     {
         private int logImgNum = 0;
+        private string tessdataDir;
+        private bool testRun;
 
         internal Eye()
         {
+            tessdataDir = ConfigurationManager.AppSettings.Get("TessdataDir");
+            testRun = Convert.ToBoolean(ConfigurationManager.AppSettings.Get("TestRun"));
             this.TriggerCollor = new System.Windows.Media.Color()
             {
                 R = 0,
@@ -46,7 +50,6 @@ namespace UltraHardcoreAssistent.Bot.Vision
             TimerPosition timerPosition = TimerPosition.Empty;
 
             var fullScreen = GetScreenImage();
-            //fullScreen = CropLetterbox(new Mat("testImg/FSRight_WOY.jpg").ToBitmap());
 
             var bounds = new Rectangle(0, 0, fullScreen.Width, fullScreen.Height);
             var newCoordSys = new NewScreenCoordinateSystem(bounds);
@@ -75,8 +78,6 @@ namespace UltraHardcoreAssistent.Bot.Vision
         /// <returns></returns>
         private Bitmap GetImgForTimerSerch(Bitmap bmp)
         {
-            var textBount = GetBoundsTextBlock(bmp);
-
             Mat mat = bmp.ToMat();
 
             Cv2.CvtColor(mat, mat, ColorConversionCodes.RGB2HSV);
@@ -87,18 +88,13 @@ namespace UltraHardcoreAssistent.Bot.Vision
 
             bmp = new Bitmap(mat.ToBitmap());
 
-            for (int x = 0; x < textBount.Width + 30; x++)
-            {
-                for (int y = 0; y < textBount.Height + 30; y++)
-                {
-                    bmp.SetPixel((textBount.X - 10) + x, (textBount.Y - 10) + y, Color.White);
-                }
-            }
             //using (new Window("изображение", bmp.ToMat()))
             //{
             //    Cv2.WaitKey();
             //}
 
+            if (testRun)
+                LogImage(bmp);
             return bmp;
         }
 
@@ -118,21 +114,34 @@ namespace UltraHardcoreAssistent.Bot.Vision
         /// </summary>
         /// <param name="bmp"></param>
         /// <returns></returns>
-        private Rectangle GetBoundsTextBlock(Bitmap bmp)
+        private Rectangle GetBoundsTextBlock(Bitmap bmp, bool cropTextBorder = false)
         {
             int firstY = 0;
             int secondY = 0;
             int firstX = 0;
             int secontX = 0;
 
+            int cropW = (int)(bmp.Width * 0.1);
+            int cropH = (int)(bmp.Height * 0.1);
+            var cropBounds = new Rectangle(0 + cropW, 0 + cropH,
+                bmp.Width - cropW * 2, bmp.Height - cropH * 2);
+
+            var cropBmp = bmp.Clone(cropBounds, bmp.PixelFormat);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.White);
+                g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceOver;
+                g.DrawImage(cropBmp, cropW, cropH);
+            }
+
             Mat mat;
             mat = bmp.ToMat();
             Cv2.CvtColor(mat, mat, ColorConversionCodes.RGB2GRAY);
+            mat = mat.Blur(new OpenCvSharp.Size(5, 5));
 
-            mat = mat.Threshold(75, 300, ThresholdTypes.Binary);
+            mat = mat.Threshold(75, 255, ThresholdTypes.Binary);
+
             bmp = mat.ToBitmap();
-            mat.ToWriteableBitmap();
-            mat.ToBitmapSource();
 
             var bounds = new Rectangle(0, 0, bmp.Width, bmp.Height);
             var newCoordSys = new NewScreenCoordinateSystem(bounds);
@@ -147,7 +156,10 @@ namespace UltraHardcoreAssistent.Bot.Vision
                 var color = bmp.GetPixel(item.X, item.Y);
                 if (color.ToArgb() != Color.White.ToArgb())
                 {
-                    firstY = item.Y + 10;
+                    if (cropTextBorder == false)
+                        firstY = item.Y + 10;
+                    else
+                        firstY = item.Y;
                     break;
                 }
             }
@@ -157,7 +169,10 @@ namespace UltraHardcoreAssistent.Bot.Vision
                 var color = bmp.GetPixel(item.X, item.Y);
                 if (color.ToArgb() != Color.White.ToArgb())
                 {
-                    secondY = item.Y - 10;
+                    if (cropTextBorder == false)
+                        secondY = item.Y - 10;
+                    else
+                        secondY = item.Y;
                     break;
                 }
             }
@@ -167,7 +182,10 @@ namespace UltraHardcoreAssistent.Bot.Vision
                 var color = bmp.GetPixel(item.X, item.Y);
                 if (color.ToArgb() != Color.White.ToArgb())
                 {
-                    firstX = item.X + 10;
+                    if (cropTextBorder == false)
+                        firstX = item.X + 10;
+                    else
+                        firstX = item.X;
                     break;
                 }
             }
@@ -177,7 +195,10 @@ namespace UltraHardcoreAssistent.Bot.Vision
                 var color = bmp.GetPixel(item.X, item.Y);
                 if (color.ToArgb() != Color.White.ToArgb())
                 {
-                    secontX = item.X - 10;
+                    if (cropTextBorder == false)
+                        secontX = item.X - 10;
+                    else
+                        secontX = item.X;
                     break;
                 }
             }
@@ -202,6 +223,8 @@ namespace UltraHardcoreAssistent.Bot.Vision
 
             bmp = bmp.Clone(imgBounds, bmp.PixelFormat);
 
+            if (testRun)
+                LogImage(bmp);
             return bmp;
         }
 
@@ -216,7 +239,6 @@ namespace UltraHardcoreAssistent.Bot.Vision
             string result = "";
             string PatternCorrectSymbols = "QWERTYUIOPASDFGHJKLZXCVBNM";
 
-            string tessdataDir = ConfigurationManager.AppSettings.Get("TessdataDir");
             using (var engine = new TesseractEngine(tessdataDir, "eng", EngineMode.Default))
             {
                 var page = engine.Process(bmp);
@@ -339,11 +361,12 @@ namespace UltraHardcoreAssistent.Bot.Vision
         private Bitmap GetScreenImage()
         {
             return GetScreenImage(Screen.PrimaryScreen.Bounds);
+            //return CropLetterbox(new Mat("testImg/test.jpg").ToBitmap());
         }
 
         private void LogImage(Bitmap bmp)
         {
-            if (System.IO.Directory.Exists("outTestImg") == false)
+            if (System.IO.Directory.Exists("л") == false)
                 System.IO.Directory.CreateDirectory("outTestImg");
             bmp.ToMat().ImWrite("outTestImg/" + logImgNum.ToString() + ".tif");
             logImgNum++;
@@ -361,7 +384,7 @@ namespace UltraHardcoreAssistent.Bot.Vision
             for (int i = 0; i < numСlippedCord; i++)
                 list.RemoveAt(0);
 
-            foreach (var cord in list.Reverse())
+            foreach (var cord in list)
             {
                 var pixel = bitmap.GetPixel(cord.X, cord.Y);
                 var mColor = new System.Windows.Media.Color()
