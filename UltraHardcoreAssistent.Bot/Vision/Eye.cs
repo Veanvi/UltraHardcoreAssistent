@@ -2,27 +2,36 @@
 using OpenCvSharp.Extensions;
 using System;
 using System.Collections.Generic;
+using System.Configuration;
+using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Tesseract;
-using System.Configuration;
-using System.Collections.Specialized;
+using Color = System.Windows.Media.Color;
+using Size = OpenCvSharp.Size;
 
 namespace UltraHardcoreAssistent.Bot.Vision
 {
     internal class Eye
     {
-        private int logImgNum = 0;
-        private string tessdataDir;
-        private bool testRun;
+        private readonly string tessdataDir;
+
+#if DEBUG
+        private readonly string testImgPath = "testImg/testWind.tif";
+#endif
+        private readonly bool testRun;
+        private int logImgNum;
 
         internal Eye()
         {
             tessdataDir = ConfigurationManager.AppSettings.Get("TessdataDir");
             testRun = Convert.ToBoolean(ConfigurationManager.AppSettings.Get("TestRun"));
-            this.TriggerCollor = new System.Windows.Media.Color()
+            TriggerCollor = new Color
             {
                 R = 0,
                 G = 0,
@@ -30,6 +39,9 @@ namespace UltraHardcoreAssistent.Bot.Vision
             };
             NumColorApprox = 1000;
         }
+
+        public int NumColorApprox { get; set; }
+        public Color TriggerCollor { get; }
 
         internal enum TimerPosition
         {
@@ -40,21 +52,90 @@ namespace UltraHardcoreAssistent.Bot.Vision
             Empty
         }
 
-        public int NumColorApprox { get; set; }
-        public System.Windows.Media.Color TriggerCollor { get; private set; }
+        /// <summary>
+        ///     Структура хронящаа координаты экрана
+        /// </summary>
+        private struct Coordinate
+        {
+            internal Coordinate(int x, int y)
+            {
+                X = x;
+                Y = y;
+            }
+
+            internal int X { get; }
+            internal int Y { get; }
+        }
+
+        /// <summary>
+        ///     Класс инкапсулирующий систему координат экрана с нулем в центре экрана
+        /// </summary>
+        private class NewScreenCoordinateSystem
+        {
+            internal NewScreenCoordinateSystem(Rectangle bounds)
+            {
+                Bounds = bounds;
+            }
+
+            private Rectangle Bounds { get; }
+            private int X => Bounds.Width / 2;
+            private int Y => Bounds.Height / 2;
+
+            internal IList<Coordinate> GetAllBottomCoordinate()
+            {
+                var allTopCoordinate = new List<Coordinate>();
+
+                for (var y = 1; y < Y; y++)
+                    allTopCoordinate.Add(new Coordinate(X, Y + y));
+
+                return allTopCoordinate;
+            }
+
+            internal IList<Coordinate> GetAllLeftCoordinate()
+            {
+                var allTopCoordinate = new List<Coordinate>();
+
+                for (var x = 1; x < X; x++)
+                    allTopCoordinate.Add(new Coordinate(X - x, Y));
+
+                return allTopCoordinate;
+            }
+
+            internal IList<Coordinate> GetAllRightCoordinate()
+            {
+                var allTopCoordinate = new List<Coordinate>();
+
+                for (var x = 1; x < X; x++)
+                    allTopCoordinate.Add(new Coordinate(X + x, Y));
+
+                return allTopCoordinate;
+            }
+
+            internal IList<Coordinate> GetAllTopCoordinate()
+            {
+                var allTopCoordinate = new List<Coordinate>();
+
+                for (var y = 1; y < Y; y++)
+                    allTopCoordinate.Add(new Coordinate(X, Y - y));
+
+                return allTopCoordinate;
+            }
+        }
 
         #region GameTimer
 
         internal TimerPosition GetTimerPosition()
         {
-            TimerPosition timerPosition = TimerPosition.Empty;
+            var timerPosition = TimerPosition.Empty;
+            var gameScreen = GetGameScreenshot();
 
-            var fullScreen = GetScreenImage();
+            var units = GraphicsUnit.Point;
+            var bmpRectangleF = gameScreen.GetBounds(ref units);
+            var bmpRectangle = Rectangle.Round(bmpRectangleF);
 
-            var bounds = new Rectangle(0, 0, fullScreen.Width, fullScreen.Height);
-            var newCoordSys = new NewScreenCoordinateSystem(bounds);
+            var newCoordSys = new NewScreenCoordinateSystem(bmpRectangle);
 
-            Bitmap bitmap = GetImgForTimerSerch(fullScreen);
+            var bitmap = GetImgForTimerSerch(gameScreen);
 
             if (SearchInColorsList(bitmap, newCoordSys.GetAllTopCoordinate()))
                 timerPosition = TimerPosition.Top;
@@ -72,18 +153,18 @@ namespace UltraHardcoreAssistent.Bot.Vision
         }
 
         /// <summary>
-        /// Получить изображение подготовленное для поиска игравого таймера (фон белый, таймер черный)
+        ///     Получить изображение подготовленное для поиска игравого таймера (фон белый, таймер черный)
         /// </summary>
         /// <param name="bmp">Изображение без черных полос</param>
         /// <returns></returns>
         private Bitmap GetImgForTimerSerch(Bitmap bmp)
         {
-            Mat mat = bmp.ToMat();
+            var mat = bmp.ToMat();
 
             Cv2.CvtColor(mat, mat, ColorConversionCodes.RGB2HSV);
             var chanel = mat.Split();
 
-            mat = chanel[0].Blur(new OpenCvSharp.Size(50, 50));
+            mat = chanel[0].Blur(new Size(50, 50));
             mat = mat.Threshold(70, 255, ThresholdTypes.Binary);
 
             bmp = new Bitmap(mat.ToBitmap());
@@ -99,40 +180,41 @@ namespace UltraHardcoreAssistent.Bot.Vision
 
         internal string GetText()
         {
-            var bmp = GetScreenImage();
+            var bmp = GetGameScreenshot();
+
             bmp = GetImgText(bmp);
             return GetRecognizedText(bmp);
         }
 
         /// <summary>
-        /// Получить граници блока с текстом
+        ///     Получить граници блока с текстом
         /// </summary>
         /// <param name="bmp"></param>
         /// <returns></returns>
         private Rectangle GetBoundsTextBlock(Bitmap bmp, bool cropTextBorder = false)
         {
-            int firstY = 0;
-            int secondY = 0;
-            int firstX = 0;
-            int secontX = 0;
+            var firstY = 0;
+            var secondY = 0;
+            var firstX = 0;
+            var secontX = 0;
 
-            int cropW = (int)(bmp.Width * 0.1);
-            int cropH = (int)(bmp.Height * 0.1);
+            var cropW = (int)(bmp.Width * 0.1);
+            var cropH = (int)(bmp.Height * 0.1);
             var cropBounds = new Rectangle(0 + cropW, 0 + cropH,
                 bmp.Width - cropW * 2, bmp.Height - cropH * 2);
 
             var cropBmp = bmp.Clone(cropBounds, bmp.PixelFormat);
             using (var g = Graphics.FromImage(bmp))
             {
-                g.Clear(Color.White);
-                g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceOver;
+                g.Clear(System.Drawing.Color.White);
+                g.CompositingMode = CompositingMode.SourceOver;
                 g.DrawImage(cropBmp, cropW, cropH);
             }
 
             Mat mat;
             mat = bmp.ToMat();
             Cv2.CvtColor(mat, mat, ColorConversionCodes.RGB2GRAY);
-            mat = mat.Blur(new OpenCvSharp.Size(5, 5));
+            mat = mat.Blur(new Size(5, 5));
 
             mat = mat.Threshold(75, 255, ThresholdTypes.Binary);
 
@@ -149,7 +231,7 @@ namespace UltraHardcoreAssistent.Bot.Vision
             foreach (var item in topCord)
             {
                 var color = bmp.GetPixel(item.X, item.Y);
-                if (color.ToArgb() != Color.White.ToArgb())
+                if (color.ToArgb() != System.Drawing.Color.White.ToArgb())
                 {
                     if (cropTextBorder == false)
                         firstY = item.Y + 10;
@@ -162,7 +244,7 @@ namespace UltraHardcoreAssistent.Bot.Vision
             foreach (var item in botCord)
             {
                 var color = bmp.GetPixel(item.X, item.Y);
-                if (color.ToArgb() != Color.White.ToArgb())
+                if (color.ToArgb() != System.Drawing.Color.White.ToArgb())
                 {
                     if (cropTextBorder == false)
                         secondY = item.Y - 10;
@@ -175,7 +257,7 @@ namespace UltraHardcoreAssistent.Bot.Vision
             foreach (var item in leftCord)
             {
                 var color = bmp.GetPixel(item.X, item.Y);
-                if (color.ToArgb() != Color.White.ToArgb())
+                if (color.ToArgb() != System.Drawing.Color.White.ToArgb())
                 {
                     if (cropTextBorder == false)
                         firstX = item.X + 10;
@@ -188,7 +270,7 @@ namespace UltraHardcoreAssistent.Bot.Vision
             foreach (var item in rightCord)
             {
                 var color = bmp.GetPixel(item.X, item.Y);
-                if (color.ToArgb() != Color.White.ToArgb())
+                if (color.ToArgb() != System.Drawing.Color.White.ToArgb())
                 {
                     if (cropTextBorder == false)
                         secontX = item.X - 10;
@@ -203,17 +285,17 @@ namespace UltraHardcoreAssistent.Bot.Vision
         }
 
         /// <summary>
-        /// Получить изображение блока с текстом подготовленного к распознанию
+        ///     Получить изображение блока с текстом подготовленного к распознанию
         /// </summary>
         /// <param name="bmp">Изображение без черных полос</param>
         /// <returns></returns>
         private Bitmap GetImgText(Bitmap bmp)
         {
             var imgBounds = GetBoundsTextBlock(bmp);
-            Mat mat = bmp.ToMat();
+            var mat = bmp.ToMat();
             Cv2.CvtColor(mat, mat, ColorConversionCodes.RGB2GRAY);
 
-            mat = mat.Blur(new OpenCvSharp.Size(5, 5));
+            mat = mat.Blur(new Size(5, 5));
             mat = mat.Threshold(70, 255, ThresholdTypes.Binary);
             bmp = mat.ToBitmap();
 
@@ -225,15 +307,15 @@ namespace UltraHardcoreAssistent.Bot.Vision
         }
 
         /// <summary>
-        /// Получить распознаный текст
+        ///     Получить распознаный текст
         /// </summary>
         /// <param name="bmp">Изображение подготовленное к распознанию текста</param>
         /// <returns></returns>
         private string GetRecognizedText(Bitmap bmp)
         {
             string recognizeText;
-            string result = "";
-            string PatternCorrectSymbols = "QWERTYUIOPASDFGHJKLZXCVBNM";
+            var result = "";
+            var PatternCorrectSymbols = "QWERTYUIOPASDFGHJKLZXCVBNM";
 
             using (var engine = new TesseractEngine(tessdataDir, "eng", EngineMode.Default))
             {
@@ -242,12 +324,8 @@ namespace UltraHardcoreAssistent.Bot.Vision
             }
 
             foreach (var item in recognizeText.ToUpper())
-            {
                 if (PatternCorrectSymbols.Contains(item))
-                {
                     result += item;
-                }
-            }
 
             return result;
         }
@@ -256,77 +334,160 @@ namespace UltraHardcoreAssistent.Bot.Vision
 
         #region SupportMethod
 
-        internal bool IsGameWindowActive()
+        private Rectangle GetWindowRectangle()
         {
-            bool result = false;
-            var bmp = GetScreenImage();
+#if DEBUG
+            var bitmap = new Mat(testImgPath).ToBitmap();
 
-            for (int y = 0; y < bmp.Height; y++)
-            {
-                var curCollor = bmp.GetPixel(bmp.Width / 2, y);
-                if (curCollor.ToArgb() != Color.Black.ToArgb())
-                {
-                    result = true;
-                    break;
-                }
-            }
-            return result;
+            var units = GraphicsUnit.Point;
+            var bmpRectangleF = bitmap.GetBounds(ref units);
+            var bmpRectangle = Rectangle.Round(bmpRectangleF);
+
+            return bmpRectangle;
+#endif
+#if !DEBUG
+            // Старый способ, до Aero Theme
+            //GetWindowRect(GetGameProcess().MainWindowHandle, out var rect);
+
+            // Новый способ, с Aero Theme
+            var res = DwmGetWindowAttribute(GetGameProcess().MainWindowHandle,
+                9,
+                out var rect,
+                Marshal.SizeOf(typeof(Rect)));
+
+            return rect.ToRectangle();
+#endif
         }
 
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out Rect lpRect);
+
+        internal bool IsGameWindowActive()
+        {
+#if DEBUG
+            return true;
+#endif
+#if !DEBUG
+            var gameProcess = GetGameProcess();
+
+            var fwHwnd = GetForegroundWindow();
+            var pid = 0;
+            GetWindowThreadProcessId(fwHwnd, ref pid);
+            var foregroundWindow = Process.GetProcessById(pid);
+            var isGameActive = gameProcess != null
+                               && foregroundWindow.Id == gameProcess.Id;
+            return isGameActive;
+#endif
+        }
+
+        private Process GetGameProcess()
+        {
+            return Process.GetProcessesByName("ultra_hardcore").FirstOrDefault();
+        }
+
+        [DllImport(@"dwmapi.dll")]
+        private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out Rect pvAttribute,
+            int cbAttribute);
+
+        [Serializable]
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Rect
+        {
+            public readonly int Left;
+            public readonly int Top;
+            public readonly int Right;
+            public readonly int Bottom;
+
+            public Rectangle ToRectangle()
+            {
+                return Rectangle.FromLTRB(Left, Top, Right, Bottom);
+            }
+        }
+
+        [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hwnd, ref int pid);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
         /// <summary>
-        /// Поиск похожего цвета
+        ///     Поиск похожего цвета
         /// </summary>
         /// <param name="currentColor">Текущий цвет</param>
         /// <param name="desiretColor">Искомый цвет</param>
         /// <returns></returns>
-        private bool ApproximateColorSearch(System.Windows.Media.Color currentColor, System.Windows.Media.Color desiretColor)
+        private bool ApproximateColorSearch(Color currentColor, Color desiretColor)
         {
-            double fi = Math.Pow(currentColor.R - desiretColor.R, 2)
-                + Math.Pow(currentColor.G - desiretColor.G, 2)
-                + Math.Pow(currentColor.B - desiretColor.B, 2);
+            var fi = Math.Pow(currentColor.R - desiretColor.R, 2)
+                     + Math.Pow(currentColor.G - desiretColor.G, 2)
+                     + Math.Pow(currentColor.B - desiretColor.B, 2);
 
-            bool result = fi <= NumColorApprox;
+            var result = fi <= NumColorApprox;
             return result;
         }
 
         /// <summary>
-        /// Обрезка черных полос сверху и снизу изображения.
+        ///     Обрезка черных полос сверху и снизу изображения.
         /// </summary>
         /// <param name="bitmap">Орегинальный скриншот экрана</param>
         /// <returns></returns>
         private Bitmap CropLetterbox(Bitmap bitmap)
         {
-            Coordinate topBlackLine = new Coordinate();
-            Coordinate botBlackLine = new Coordinate();
+            var topBlackLine = new Coordinate();
+            var botBlackLine = new Coordinate();
+            var leftBlackLine = new Coordinate();
 
             var bounds = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
 
             var newCoordSys = new NewScreenCoordinateSystem(bounds);
+
+            // Подрезка боковых рамок окна и заголовка окна
+            var borderSize = SystemInformation.BorderSize;
+            int titleHeight = (int)(SystemInformation.CaptionHeight * 1.5);
+
+            var workAreaRec = new Rectangle(borderSize.Width, titleHeight,
+                bitmap.Width - borderSize.Width * 2, bitmap.Height - titleHeight);
+            bitmap = bitmap.Clone(workAreaRec, bitmap.PixelFormat);
+
+            bounds = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+            newCoordSys = new NewScreenCoordinateSystem(bounds);
             var top = newCoordSys.GetAllTopCoordinate().Reverse();
             var bot = newCoordSys.GetAllBottomCoordinate().Reverse();
+            var left = newCoordSys.GetAllLeftCoordinate().Reverse();
+            var right = newCoordSys.GetAllRightCoordinate().Reverse();
 
             foreach (var item in top)
             {
-                Color color = bitmap.GetPixel(item.X, item.Y);
-                if (color.ToArgb() != Color.Black.ToArgb())
+                var color = bitmap.GetPixel(item.X, item.Y);
+                if (color.ToArgb() != System.Drawing.Color.Black.ToArgb())
                 {
-                    topBlackLine = new Coordinate(item.X, item.Y + 10);
+                    topBlackLine = new Coordinate(item.X, item.Y);
                     break;
                 }
             }
 
             foreach (var item in bot)
             {
-                Color color = bitmap.GetPixel(item.X, item.Y);
-                if (color.ToArgb() != Color.Black.ToArgb())
+                var color = bitmap.GetPixel(item.X, item.Y);
+                if (color.ToArgb() != System.Drawing.Color.Black.ToArgb())
                 {
-                    botBlackLine = new Coordinate(item.X, item.Y - 10);
+                    botBlackLine = new Coordinate(item.X, item.Y);
                     break;
                 }
             }
 
-            var imgBounds = new Rectangle(0, topBlackLine.Y,
-                bitmap.Width, botBlackLine.Y - topBlackLine.Y);
+            foreach (var item in left)
+            {
+                var color = bitmap.GetPixel(item.X, item.Y);
+                if (color.ToArgb() != System.Drawing.Color.Black.ToArgb())
+                {
+                    leftBlackLine = new Coordinate(item.X, item.Y);
+                    break;
+                }
+            }
+
+            var imgBounds = new Rectangle(leftBlackLine.X, topBlackLine.Y,
+                bitmap.Width - leftBlackLine.X * 2, botBlackLine.Y - topBlackLine.Y);
 
             bitmap = bitmap.Clone(imgBounds, bitmap.PixelFormat);
 
@@ -334,56 +495,78 @@ namespace UltraHardcoreAssistent.Bot.Vision
         }
 
         /// <summary>
-        /// Получить скриншот области экрана
+        ///     Получить скриншот области экрана
         /// </summary>
         /// <param name="rect">Область скриншота</param>
         /// <returns></returns>
-        private Bitmap GetScreenImage(Rectangle rect)
+        private Bitmap GetScreenshotWindow(Rectangle rect)
         {
-            Bitmap bmp = new Bitmap(rect.Width, rect.Height, PixelFormat.Format32bppArgb);
-            using (Graphics graphics = Graphics.FromImage(bmp))
+            var bmp = new Bitmap(rect.Width, rect.Height, PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(bmp))
             {
                 graphics.CopyFromScreen(rect.Left, rect.Top, 0, 0, rect.Size, CopyPixelOperation.SourceCopy);
             }
 
-            bmp = CropLetterbox(bmp);
             return bmp;
         }
 
         /// <summary>
-        /// Полуить скриншот всего экрана
+        ///     Получить скриншот всего экрана
         /// </summary>
         /// <returns></returns>
-        private Bitmap GetScreenImage()
+        private Bitmap GetScreenshotFullScreen()
         {
-            //return GetScreenImage(Screen.PrimaryScreen.Bounds);
-            return CropLetterbox(new Mat("testImg/test1.jpg").ToBitmap());
+            return GetScreenshotWindow(Screen.PrimaryScreen.Bounds);
+        }
+
+        private Bitmap GetGameScreenshot()
+        {
+#if DEBUG
+            return CropLetterbox(new Mat(testImgPath).ToBitmap());
+#endif
+#if !DEBUG
+            var gameProcWin = GetWindowRectangle();
+            Bitmap gameScreen = null;
+            var i = gameProcWin.Width + gameProcWin.Height;
+
+            if (gameProcWin.Width + gameProcWin.Height == 0)
+                gameScreen = GetScreenshotFullScreen();
+            else
+                gameScreen = GetScreenshotWindow(gameProcWin);
+
+            gameScreen = CropLetterbox(gameScreen);
+
+            if (testRun)
+                LogImage(gameScreen);
+
+            return gameScreen;
+#endif
         }
 
         private void LogImage(Bitmap bmp)
         {
-            if (System.IO.Directory.Exists("л") == false)
-                System.IO.Directory.CreateDirectory("outTestImg");
-            bmp.ToMat().ImWrite("outTestImg/" + logImgNum.ToString() + ".tif");
+            if (Directory.Exists("л") == false)
+                Directory.CreateDirectory("outTestImg");
+            bmp.ToMat().ImWrite("outTestImg/" + logImgNum + ".tif");
             logImgNum++;
         }
 
         /// <summary>
-        /// Поиск примерного цвета по списку координат
+        ///     Поиск примерного цвета по списку координат
         /// </summary>
         /// <param name="bitmap">Изображение подготовленное к поиску таймера</param>
         /// <param name="list">Список координат</param>
         /// <returns></returns>
         private bool SearchInColorsList(Bitmap bitmap, IList<Coordinate> list)
         {
-            int numСlippedCord = (int)((double)list.Count * (double)0.4);
-            for (int i = 0; i < numСlippedCord; i++)
+            var numСlippedCord = (int)(list.Count * 0.4);
+            for (var i = 0; i < numСlippedCord; i++)
                 list.RemoveAt(0);
 
             foreach (var cord in list)
             {
                 var pixel = bitmap.GetPixel(cord.X, cord.Y);
-                var mColor = new System.Windows.Media.Color()
+                var mColor = new Color
                 {
                     A = 255,
                     R = pixel.R,
@@ -399,75 +582,5 @@ namespace UltraHardcoreAssistent.Bot.Vision
         }
 
         #endregion SupportMethod
-
-        /// <summary>
-        /// Структура хронящаа координаты экрана
-        /// </summary>
-        private struct Coordinate
-        {
-            internal Coordinate(int x, int y)
-            {
-                this.X = x;
-                this.Y = y;
-            }
-
-            internal int X { get; private set; }
-            internal int Y { get; private set; }
-        }
-
-        /// <summary>
-        /// Класс инкапсулирующий систему координат экрана с нулем в центре экрана
-        /// </summary>
-        private class NewScreenCoordinateSystem
-        {
-            internal NewScreenCoordinateSystem(Rectangle bounds)
-            {
-                Bounds = bounds;
-            }
-
-            private Rectangle Bounds { get; set; }
-            private int X => Bounds.Width / 2;
-            private int Y => Bounds.Height / 2;
-
-            internal IList<Coordinate> GetAllBottomCoordinate()
-            {
-                var allTopCoordinate = new List<Coordinate>();
-
-                for (int y = 1; y < Y; y++)
-                    allTopCoordinate.Add(new Coordinate(X, Y + y));
-
-                return allTopCoordinate;
-            }
-
-            internal IList<Coordinate> GetAllLeftCoordinate()
-            {
-                var allTopCoordinate = new List<Coordinate>();
-
-                for (int x = 1; x < X; x++)
-                    allTopCoordinate.Add(new Coordinate(X - x, Y));
-
-                return allTopCoordinate;
-            }
-
-            internal IList<Coordinate> GetAllRightCoordinate()
-            {
-                var allTopCoordinate = new List<Coordinate>();
-
-                for (int x = 1; x < X; x++)
-                    allTopCoordinate.Add(new Coordinate(X + x, Y));
-
-                return allTopCoordinate;
-            }
-
-            internal IList<Coordinate> GetAllTopCoordinate()
-            {
-                var allTopCoordinate = new List<Coordinate>();
-
-                for (int y = 1; y < Y; y++)
-                    allTopCoordinate.Add(new Coordinate(X, Y - y));
-
-                return allTopCoordinate;
-            }
-        }
     }
 }

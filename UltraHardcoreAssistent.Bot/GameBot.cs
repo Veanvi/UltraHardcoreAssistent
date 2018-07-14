@@ -1,11 +1,11 @@
-﻿using AutoIt;
-using System;
+﻿using System;
 using System.Diagnostics;
+using System.Drawing;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using AutoIt;
 using UltraHardcoreAssistent.Bot.Vision;
 
 namespace UltraHardcoreAssistent.Bot
@@ -21,13 +21,13 @@ namespace UltraHardcoreAssistent.Bot
             Eye = new Eye();
         }
 
+        public bool IsWork { get; private set; }
+
+        private Eye Eye { get; }
+
         public event Action<string> OnArrowsPressed;
 
         public event Action<string> OnTextEntered;
-
-        public bool IsWork { get; private set; }
-
-        private Eye Eye { get; set; }
 
         public async void StartWorkAsync()
         {
@@ -44,19 +44,21 @@ namespace UltraHardcoreAssistent.Bot
                 {
                     try
                     {
-                        bool isGameActive = AutoItX.WinGetTitle("[active]") == "ultra_hardcore";
-#if DEBUG
-                        isGameActive = true;
-#endif
+
+                        bool isGameActive = Eye.IsGameWindowActive();
+
                         if (isGameActive)
                         {
                             currentKeyboardLayout = GetKeyboardLayout();
-                            ActivateKeyboardLayout((uint)1033, KeyboardLayoutFlags.KLF_SETFORPROCESS);
+                            ActivateKeyboardLayout(1033, KeyboardLayoutFlags.KLF_SETFORPROCESS);
 
                             AutoItX.AutoItSetOption("SendKeyDownDelay", 20);
                             //AutoItX.Send("{ENTER}");
                             if (token.IsCancellationRequested)
                                 return;
+
+
+
                             var timerPos = Eye.GetTimerPosition();
                             switch (timerPos)
                             {
@@ -87,7 +89,7 @@ namespace UltraHardcoreAssistent.Bot
                             AutoItX.AutoItSetOption("SendKeyDownDelay", 5);
                             if (token.IsCancellationRequested)
                                 return;
-                            string text = Eye.GetText();
+                            var text = Eye.GetText();
                             AutoItX.Send(text);
                             //foreach (var ch in text)
                             //{
@@ -109,8 +111,10 @@ namespace UltraHardcoreAssistent.Bot
                     catch (Exception e)
                     {
                     }
+
                     token.WaitHandle.WaitOne(2);
                 }
+
                 IsWork = false;
             }, token);
             await worker;
@@ -146,7 +150,7 @@ namespace UltraHardcoreAssistent.Bot
         [DllImport("user32.dll", SetLastError = true)]
         private static extern int GetWindowThreadProcessId(
             [In] IntPtr hWnd,
-            [Out, Optional] IntPtr lpdwProcessId);
+            [Out] [Optional] IntPtr lpdwProcessId);
 
         private ushort GetKeyboardLayout()
         {
